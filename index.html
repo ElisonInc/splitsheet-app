@@ -437,10 +437,21 @@
         <div id="signatureScreen" class="hidden-screen fixed inset-0 bg-black z-50 flex flex-col">
             <div class="p-6 pt-12 border-b border-white/10">
                 <h2 class="text-2xl font-bold mb-2">Sign Agreement</h2>
-                <p class="text-gray-400">By signing, you acknowledge the ownership percentages and rights outlined above. This is a binding agreement.</p>
+                <p class="text-gray-400">By signing, you acknowledge the ownership percentages and rights outlined above.</p>
             </div>
             
             <div class="flex-1 p-6 flex flex-col">
+                <!-- Electronic Signature Consent -->
+                <div class="mb-4 p-4 rounded-xl bg-yellow-500/10 border border-yellow-500/20">
+                    <label class="flex items-start gap-3 cursor-pointer">
+                        <input type="checkbox" id="signatureConsent" class="mt-1 w-5 h-5 rounded border-gray-600 bg-gray-800 text-green-500 focus:ring-green-500">
+                        <div class="text-sm">
+                            <p class="font-medium text-yellow-400 mb-1">Electronic Signature Consent</p>
+                            <p class="text-gray-300">I agree that my electronic signature is legally binding and carries the same weight as a handwritten signature. I understand this agreement will be used for PRO registration, royalty distributions, and licensing.</p>
+                        </div>
+                    </label>
+                </div>
+                
                 <div class="flex-1 bg-gray-900 rounded-2xl p-4 mb-4">
                     <canvas id="signaturePad" class="signature-pad w-full h-full"></canvas>
                 </div>
@@ -1089,17 +1100,21 @@
             },
 
             formatContributor(c) {
+                // Convert basis points to percentage for display (10000 bps = 100%)
+                const ownershipBps = c.ownership_bps || 0;
                 return {
                     id: c.id,
                     legalName: c.legal_name || '',
                     email: c.email || '',
                     proAffiliation: c.pro_affiliation || 'ASCAP',
                     ipiNumber: c.ipi_number || '',
-                    role: c.role || 'Writer',           // Artist, Producer, Writer, Engineer, etc.
-                    rightsType: c.rights_type || 'Both', // Master, Publishing, Both
-                    percentage: c.percentage || 0,       // Ownership percentage
+                    role: c.role || 'Writer',
+                    rightsType: c.rights_type || 'Both',
+                    ownershipBps: ownershipBps,              // Stored as basis points
+                    percentage: Math.round(ownershipBps / 100), // For display (0-100)
                     signatureData: c.signature_data,
                     signedAt: c.signed_at,
+                    signatureConsent: c.signature_consent || false,
                     isCurrentUser: c.id === this.data.currentUserId,
                     isCreator: c.is_creator,
                     userId: c.user_id,
@@ -1227,20 +1242,27 @@
             // ============================================
 
             async updateContributor(id, field, value) {
-                if (this.data.isFinalized) return;
+                if (this.data.isFinalized) {
+                    this.showToast('Agreement is finalized - cannot modify', 'error');
+                    return;
+                }
 
                 const updateData = {};
-                const fieldMap = {
-                    'legalName': 'legal_name',
-                    'email': 'email',
-                    'proAffiliation': 'pro_affiliation',
-                    'ipiNumber': 'ipi_number',
-                    'role': 'role',
-                    'rightsType': 'rights_type',
-                    'percentage': 'percentage'
-                };
-
-                updateData[fieldMap[field] || field] = value;
+                
+                // Convert percentage to basis points for database storage
+                if (field === 'percentage') {
+                    updateData['ownership_bps'] = Math.round(value * 100);
+                } else {
+                    const fieldMap = {
+                        'legalName': 'legal_name',
+                        'email': 'email',
+                        'proAffiliation': 'pro_affiliation',
+                        'ipiNumber': 'ipi_number',
+                        'role': 'role',
+                        'rightsType': 'rights_type'
+                    };
+                    updateData[fieldMap[field] || field] = value;
+                }
 
                 const { error } = await supabaseClient
                     .from('contributors')
@@ -1254,7 +1276,12 @@
 
                 const c = this.data.contributors.find(x => x.id === id);
                 if (c) {
-                    c[field] = value;
+                    if (field === 'percentage') {
+                        c.ownershipBps = Math.round(value * 100);
+                        c.percentage = value;
+                    } else {
+                        c[field] = value;
+                    }
                     if (field === 'percentage') this.updateTotal();
                 }
             },
@@ -1315,14 +1342,17 @@
             },
 
             updateTotal() {
-                const total = this.data.contributors.reduce((sum, c) => sum + (parseInt(c.percentage) || 0), 0);
+                // Calculate using basis points (10000 = 100%)
+                const totalBps = this.data.contributors.reduce((sum, c) => sum + (c.ownershipBps || 0), 0);
+                const totalPercent = Math.round(totalBps / 100);
+                
                 const ring = document.getElementById('progressRing');
                 const display = document.getElementById('totalPercent');
                 const btn = document.getElementById('finalizeBtn');
                 const msg = document.getElementById('validationMsg');
 
-                ring.style.setProperty('--percent', total);
-                display.textContent = total + '%';
+                ring.style.setProperty('--percent', totalPercent);
+                display.textContent = totalPercent + '%';
 
                 if (this.data.isFinalized) {
                     btn.disabled = true;
@@ -1332,7 +1362,8 @@
                     return;
                 }
 
-                if (total === 100) {
+                // Validate exact 100% (10000 bps)
+                if (totalBps === 10000) {
                     ring.style.background = `conic-gradient(#30D158 100%, #30D158 100%)`;
                     btn.disabled = false;
                     btn.className = 'w-full py-4 rounded-2xl btn-primary text-lg font-semibold';
@@ -1341,7 +1372,8 @@
                 } else {
                     btn.disabled = true;
                     btn.className = 'w-full py-4 rounded-2xl bg-gray-800 text-gray-500 font-semibold';
-                    btn.textContent = total > 100 ? `Over by ${total - 100}%` : `Need ${100 - total}% more`;
+                    const diff = Math.abs(totalPercent - 100);
+                    btn.textContent = totalBps > 10000 ? `Over by ${diff}%` : `Need ${diff}% more`;
                     msg.classList.remove('hidden');
                 }
             },
@@ -1524,22 +1556,44 @@
                     return;
                 }
 
-                const canvas = document.getElementById('signaturePad');
-                const data = canvas.toDataURL();
+                // Validate consent checkbox
+                const consentChecked = document.getElementById('signatureConsent').checked;
+                if (!consentChecked) {
+                    this.showToast('You must consent to electronic signature', 'error');
+                    return;
+                }
 
+                const canvas = document.getElementById('signaturePad');
+                const signatureData = canvas.toDataURL();
+                
+                // Verify signature is not empty
+                const blankCanvas = document.createElement('canvas');
+                blankCanvas.width = canvas.width;
+                blankCanvas.height = canvas.height;
+                if (signatureData === blankCanvas.toDataURL()) {
+                    this.showToast('Please provide a signature', 'error');
+                    return;
+                }
+
+                // Get current user info for audit
+                const { data: { user } } = await supabaseClient.auth.getUser();
+                
                 const { error } = await supabaseClient
                     .from('contributors')
                     .update({
-                        signature_data: data,
-                        signed_at: new Date().toISOString()
+                        signature_data: signatureData,
+                        signed_at: new Date().toISOString(),
+                        signature_consent: true
                     })
                     .eq('id', this.data.signingId);
 
                 if (error) {
-                    this.showToast('Error saving signature', 'error');
+                    this.showToast('Error saving signature: ' + error.message, 'error');
                     return;
                 }
 
+                // Reset consent checkbox
+                document.getElementById('signatureConsent').checked = false;
                 document.getElementById('signatureScreen').classList.add('hidden-screen');
 
                 const { data: contributors } = await supabaseClient
@@ -1551,10 +1605,11 @@
                 this.renderContributors();
                 this.showToast('Signature saved!', 'success');
 
-                const total = this.data.contributors.reduce((sum, c) => sum + (c.percentage || 0), 0);
-                const allSigned = this.data.contributors.every(c => c.signatureData && c.signedAt);
+                // Check using basis points (10000 = 100%)
+                const totalBps = this.data.contributors.reduce((sum, c) => sum + (c.ownershipBps || 0), 0);
+                const allSigned = this.data.contributors.every(c => c.signatureData && c.signedAt && c.signatureConsent);
 
-                if (allSigned && total === 100) {
+                if (allSigned && totalBps === 10000) {
                     this.showToast('All parties signed! Finalizing...', 'success');
                     await this.finalizeAgreement();
                 }
@@ -1576,23 +1631,38 @@
             async finalizeAgreement() {
                 if (this.data.isFinalized) return;
 
-                const total = this.data.contributors.reduce((sum, c) => sum + (parseInt(c.percentage) || 0), 0);
-                if (total !== 100) return;
+                // Validate using basis points (10000 = 100%)
+                const totalBps = this.data.contributors.reduce((sum, c) => sum + (c.ownershipBps || 0), 0);
+                if (totalBps !== 10000) {
+                    this.showToast(`Total ownership must equal 100% (current: ${(totalBps / 100).toFixed(2)}%)`, 'error');
+                    return;
+                }
 
-                const allSigned = this.data.contributors.every(c => c.signatureData && c.signedAt);
+                const allSigned = this.data.contributors.every(c => c.signatureData && c.signedAt && c.signatureConsent);
                 if (!allSigned) {
-                    this.showToast("All contributors must sign before finalizing.", 'error');
+                    this.showToast("All contributors must sign and consent before finalizing.", 'error');
+                    return;
+                }
+
+                // Check if user is creator or contributor
+                const isCreator = this.data.contributors.some(c => c.isCurrentUser && c.isCreator);
+                if (!isCreator) {
+                    this.showToast("Only the session creator can finalize the agreement.", 'error');
                     return;
                 }
 
                 const hash = await this.generateHash();
                 const finalizedAt = new Date().toISOString();
 
+                // Get current user for audit
+                const { data: { user } } = await supabaseClient.auth.getUser();
+                
                 const { error } = await supabaseClient
                     .from('sessions')
                     .update({
                         finalized: true,
                         finalized_at: finalizedAt,
+                        finalized_by: user?.id || null,
                         hash: hash
                     })
                     .eq('id', this.data.sessionId);
@@ -1613,18 +1683,23 @@
             },
 
             async generateHash() {
+                // Create deterministic hash of agreement state
                 const data = {
+                    v: 1, // hash version for future compatibility
                     songTitle: this.data.songTitle,
                     sessionId: this.data.sessionId,
+                    version: this.data.version || 1,
                     finalizedAt: new Date().toISOString(),
                     contributors: this.data.contributors.map(c => ({
                         name: c.legalName,
                         role: c.role,
                         rightsType: c.rightsType,
-                        percentage: c.percentage,
+                        ownershipBps: c.ownershipBps,
                         pro: c.proAffiliation,
-                        signedAt: c.signedAt
-                    }))
+                        signedAt: c.signedAt,
+                        hasSignature: !!c.signatureData,
+                        hasConsent: c.signatureConsent
+                    })).sort((a, b) => a.name.localeCompare(b.name)) // deterministic ordering
                 };
 
                 const msgBuffer = new TextEncoder().encode(JSON.stringify(data));
