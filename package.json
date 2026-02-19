@@ -1,0 +1,21 @@
+{
+  "name": "splitsheet-app",
+  "version": "1.0.0",
+  "description": "Real-time music ownership agreement engine",
+  "scripts": {
+    "dev": "vercel dev",
+    "deploy": "vercel --prod"
+  },
+  "keywords": [
+    "music",
+    "ownership",
+    "splitsheet",
+    "agreement",
+    "pwa"
+  ],
+  "author": "Elison Inc.",
+  "license": "MIT",
+  "devDependencies": {
+    "vercel": "^33.0.0"
+  }
+}
