@@ -2,104 +2,180 @@
 
 Real-time collaborative split sheet agreements for music creators. No more lost royalties, no more "we'll figure it out later."
 
+![SplitSheet](https://img.shields.io/badge/version-1.0.0-green)
+![PWA](https://img.shields.io/badge/PWA-Ready-blue)
+![License](https://img.shields.io/badge/license-MIT-yellow)
+
 ## Features
 
 - ⚡ **Real-time Collaboration** — All writers add their splits simultaneously while the vibe is fresh
 - ✓ **Legally Binding** — Digital signatures + PDF generation recognized by PROs worldwide
-- 📱 **Mobile-First** — Designed for the studio, works perfectly on phones and tablets
+- 📱 **Mobile-First PWA** — Install on iOS/Android, works offline
 - 🔒 **Tamper-Proof** — SHA-256 document hashing ensures agreement integrity
 - 📤 **Easy Sharing** — QR codes and session links for instant collaboration
+- 🔄 **Offline Support** — Queue changes when offline, sync when reconnected
 
-## Tech Stack
+## Quick Start
 
-- **Frontend**: Vanilla HTML/JS with Tailwind CSS
-- **Backend**: Supabase (PostgreSQL + Realtime)
-- **PDF Generation**: jsPDF
-- **QR Codes**: QRCode.js
+### 1. Setup Supabase
 
-## Getting Started
+1. Create a new project at [supabase.com](https://supabase.com)
+2. Go to the SQL Editor and run the contents of `supabase/schema.sql`
+3. Copy your project URL and anon key from Settings → API
 
-### Prerequisites
+### 2. Configure the App
 
-- A Supabase account (free tier works fine)
-- A GitHub account
-- A web browser
+1. Copy `supabase/.env.example` to `supabase/.env`
+2. Edit `js/config.js` and add your Supabase credentials:
 
-### Supabase Setup
-
-1. Create a new Supabase project
-2. Run the following SQL in the SQL Editor:
-
-```sql
--- Create sessions table
-create table sessions (
-  id text primary key,
-  song_title text default '',
-  created_at timestamp with time zone default timezone('utc'::text, now()),
-  finalized boolean default false,
-  finalized_at timestamp with time zone,
-  hash text
-);
-
--- Create collaborators table
-create table collaborators (
-  id uuid default gen_random_uuid() primary key,
-  session_id text references sessions(id) on delete cascade,
-  legal_name text,
-  email text,
-  pro_affiliation text default 'ASCAP',
-  ipi_number text,
-  contribution text default 'Both',
-  percentage integer default 0,
-  signature_data text,
-  signed_at timestamp with time zone,
-  is_creator boolean default false,
-  device_id text,
-  created_at timestamp with time zone default timezone('utc'::text, now()),
-  updated_at timestamp with time zone default timezone('utc'::text, now()),
-  unique(session_id, device_id)
-);
-
--- Enable realtime
-alter publication supabase_realtime add table sessions;
-alter publication supabase_realtime add table collaborators;
-
--- Enable RLS (customize policies for production)
-alter table sessions enable row level security;
-alter table collaborators enable row level security;
-
-create policy "Allow all" on sessions for all using (true);
-create policy "Allow all" on collaborators for all using (true);
+```javascript
+const SUPABASE_CONFIG = {
+    URL: 'https://your-project.supabase.co',
+    ANON_KEY: 'your-anon-key-here'
+};
 ```
 
-3. Copy your Supabase URL and anon key
-4. Update the `SUPABASE_URL` and `SUPABASE_ANON_KEY` constants in `index.html`
+### 3. Generate Icons
 
-### Deployment
+Open `icons/generate-icons.html` in a browser and click "Download All Icons" to generate PWA icons.
 
-This is a static HTML app that can be deployed anywhere:
+### 4. Deploy
 
-- **GitHub Pages**: Push to a repo and enable Pages
-- **Vercel**: Connect your GitHub repo
-- **Netlify**: Drag and drop the folder
-- **Cloudflare Pages**: Connect your GitHub repo
+Deploy to any static hosting:
 
-## Usage
+```bash
+# GitHub Pages
+# Just push to your repo and enable Pages in settings
 
-1. Open the app in your browser
-2. Click "New Split Sheet" to create a session
-3. Enter the song title
-4. Add collaborators and their splits (must total 100%)
-5. Each writer signs digitally
-6. Once all signatures are collected, the PDF is automatically generated
+# Or use Vercel
+npm i -g vercel
+vercel --prod
 
-## Mobile App
+# Or Netlify
+drop the folder on netlify.com
+```
 
-The app is designed to work as a PWA (Progressive Web App):
+## Database Schema
 
-- Add to home screen on iOS/Android
-- Works offline with cached assets
-- Native-like experience
+### Sessions Table
+- `id` (text, primary key) — Session code
+- `song_title` (text) — Song name
+- `finalized` (boolean) — Whether agreement is complete
+- `hash` (text) — SHA-256 document hash
+
+### Collaborators Table
+- `id` (uuid, primary key)
+- `session_id` (text) — Links to session
+- `legal_name`, `email`, `pro_affiliation`, `ipi_number` — Writer info
+- `percentage` (integer) — Ownership split (0-100)
+- `signature_data` (text) — Base64 signature image
+- `device_id` (text) — For re-identification
+
+## PWA Features
+
+### Install on Mobile
+
+**iOS (Safari):**
+1. Open the app in Safari
+2. Tap Share → "Add to Home Screen"
+3. Open from home screen like a native app
+
+**Android (Chrome):**
+1. Open the app in Chrome
+2. Tap menu → "Add to Home screen"
+3. Or accept the install prompt
+
+### Offline Support
+
+- App shell is cached for instant load
+- Changes queued when offline, synced on reconnect
+- Toast notifications inform you of sync status
+
+### Push Notifications
+
+Service worker supports push notifications for:
+- Session updates
+- New collaborators joining
+- Finalization events
+
+(Requires additional setup with your push notification provider)
+
+## Project Structure
+
+```
+splitsheet-app/
+├── index.html              # Main application
+├── manifest.json           # PWA manifest
+├── sw.js                   # Service Worker (offline support)
+├── js/
+│   └── config.js           # App configuration
+├── supabase/
+│   ├── schema.sql          # Database setup
+│   └── .env.example        # Environment template
+├── icons/
+│   └── generate-icons.html # Icon generator tool
+├── README.md
+└── CONTRIBUTING.md
+```
+
+## Environment Variables
+
+Create `supabase/.env` from the example file:
+
+```env
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_ANON_KEY=your-anon-key-here
+```
+
+## Development
+
+```bash
+# Clone the repo
+git clone https://github.com/ElisonInc/splitsheet-app.git
+cd splitsheet-app
+
+# Start a local server
+python3 -m http.server 8000
+# or
+npx serve .
+
+# Open http://localhost:8000
+```
+
+## Customization
+
+### Colors
+Edit the CSS variables in `index.html`:
+
+```css
+--primary: #30D158;      /* Green accent */
+--secondary: #007AFF;     /* Blue accent */
+```
+
+### Max Collaborators
+Edit `APP_CONFIG` in `js/config.js`:
+
+```javascript
+MAX_COLLABORATORS: 10,
+DEFAULT_CREATOR_SPLIT: 50,
+```
+
+## Security Considerations
+
+⚠️ **Important:** The current setup uses open RLS policies for demo purposes. For production:
+
+1. Enable proper Row Level Security
+2. Add authentication if needed
+3. Rate limit session creation
+4. Validate all inputs server-side
+
+## Browser Support
+
+- Chrome/Edge 90+
+- Safari 14+
+- Firefox 90+
+- iOS Safari 14+
+- Chrome Android 90+
 
 ## License
 
@@ -108,3 +184,7 @@ MIT License - Copyright (c) 2026 Elison Inc.
 ## Credits
 
 Built by [Elison Inc.](https://github.com/ElisonInc)
+
+---
+
+**Need help?** Open an issue on GitHub or email support@elison.inc
