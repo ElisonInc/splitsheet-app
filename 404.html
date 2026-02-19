@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>SplitSheet</title>
+    <script>
+        // Single Page App redirect for GitHub Pages
+        // Redirects any 404 to index.html with the path preserved
+        var path = window.location.pathname;
+        var redirect = '/splitsheet-app/?redirect=' + encodeURIComponent(path + window.location.search);
+        window.location.replace(redirect);
+    </script>
+</head>
+<body>
+    <p>Redirecting to SplitSheet...</p>
+</body>
+</html>
