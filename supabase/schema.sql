@@ -4,6 +4,10 @@
 -- Enable required extensions
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
+-- Drop existing tables if you want a fresh start (optional - remove these lines if you want to keep existing data)
+-- DROP TABLE IF EXISTS public.collaborators CASCADE;
+-- DROP TABLE IF EXISTS public.sessions CASCADE;
+
 -- Sessions table: Stores the main split sheet sessions
 create table if not exists public.sessions (
   id text primary key,
@@ -39,15 +43,42 @@ create index if not exists idx_collaborators_session on public.collaborators(ses
 create index if not exists idx_collaborators_device on public.collaborators(device_id);
 create index if not exists idx_sessions_finalized on public.sessions(finalized);
 
--- Enable Realtime for live collaboration
-alter publication supabase_realtime add table public.sessions;
-alter publication supabase_realtime add table public.collaborators;
+-- Enable Realtime for live collaboration (safe version)
+do $$
+begin
+  -- Try to add sessions table to realtime
+  begin
+    alter publication supabase_realtime add table public.sessions;
+  exception when duplicate_object then
+    -- Table already in publication, ignore
+    null;
+  end;
+  
+  -- Try to add collaborators table to realtime
+  begin
+    alter publication supabase_realtime add table public.collaborators;
+  exception when duplicate_object then
+    -- Table already in publication, ignore
+    null;
+  end;
+end $$;
 
 -- Row Level Security (RLS) Policies
 -- These are basic policies - customize for your security needs
 
 alter table public.sessions enable row level security;
 alter table public.collaborators enable row level security;
+
+-- Drop existing policies if they exist (to avoid conflicts)
+drop policy if exists "Allow public read access to sessions" on public.sessions;
+drop policy if exists "Allow public insert to sessions" on public.sessions;
+drop policy if exists "Allow public update to sessions" on public.sessions;
+drop policy if exists "Allow all" on public.sessions;
+drop policy if exists "Allow public read access to collaborators" on public.collaborators;
+drop policy if exists "Allow public insert to collaborators" on public.collaborators;
+drop policy if exists "Allow public update to collaborators" on public.collaborators;
+drop policy if exists "Allow public delete from collaborators" on public.collaborators;
+drop policy if exists "Allow all" on public.collaborators;
 
 -- Sessions policies
 create policy "Allow public read access to sessions"
@@ -88,6 +119,9 @@ begin
 end;
 $$ language plpgsql security definer;
 
+-- Drop existing trigger if exists
+drop trigger if exists on_collaborator_updated on public.collaborators;
+
 -- Trigger to auto-update updated_at
 create trigger on_collaborator_updated
   before update on public.collaborators
@@ -95,6 +129,7 @@ create trigger on_collaborator_updated
   execute procedure public.handle_updated_at();
 
 -- View to get session summary with collaborator count
+drop view if exists public.session_summary;
 create or replace view public.session_summary as
 select 
   s.id,
