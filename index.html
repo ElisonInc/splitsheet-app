@@ -218,6 +218,11 @@
             </div>
             
             <div class="space-y-3 pb-8">
+                <!-- Resume Session Button (shown if there's an active session) -->
+                <button onclick="app.resumeSession()" id="resumeSessionBtn" class="hidden w-full py-4 rounded-2xl bg-blue-500/20 border border-blue-500/30 text-blue-400 font-semibold text-lg">
+                    Resume Last Session
+                </button>
+                
                 <button onclick="app.createSession()" class="btn-primary w-full py-4 rounded-2xl text-lg">
                     New Split Sheet
                 </button>
@@ -357,6 +362,12 @@
 
         <!-- Session Screen -->
         <div id="sessionScreen" class="hidden-screen pt-20 px-4">
+            <!-- Back to Home Button -->
+            <button onclick="app.goHome()" class="mb-4 flex items-center gap-2 text-gray-400 hover:text-white transition text-sm">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+                Back to Home
+            </button>
+            
             <div class="mb-6">
                 <input type="text" id="songTitle" placeholder="Song Title (e.g., Midnight Dreams)" 
                        class="ios-input w-full text-2xl font-bold px-4 py-3 rounded-xl mb-2"
@@ -526,15 +537,20 @@
                 // Check for session in URL
                 const params = new URLSearchParams(window.location.search);
                 const sessionId = params.get('session');
+                const redirect = params.get('redirect');
                 
                 if (sessionId) {
+                    // User clicked a share link - join that session
                     await this.joinSessionById(sessionId);
-                } else {
-                    const activeSession = localStorage.getItem(APP_CONFIG.STORAGE_KEYS.ACTIVE_SESSION);
-                    if (activeSession) {
-                        await this.loadSession(activeSession);
+                } else if (redirect) {
+                    // Handle 404 redirect
+                    const redirectSessionId = redirect.match(/session=([A-Z0-9]+)/)?.[1];
+                    if (redirectSessionId) {
+                        await this.joinSessionById(redirectSessionId);
                     }
                 }
+                // Note: We no longer auto-load from localStorage to prevent getting stuck
+                // Users can access their sessions via "My Sessions" or the resume prompt
                 
                 document.getElementById('dateDisplay').textContent = new Date().toLocaleDateString();
                 
@@ -549,6 +565,9 @@
                 if (pending) {
                     this.data.pendingChanges = JSON.parse(pending);
                 }
+                
+                // Check for active session to show resume button
+                this.checkForActiveSession();
                 
                 // Close user menu when clicking outside
                 document.addEventListener('click', (e) => {
@@ -567,6 +586,23 @@
                     localStorage.setItem(APP_CONFIG.STORAGE_KEYS.DEVICE_ID, deviceId);
                 }
                 return deviceId;
+            },
+            
+            checkForActiveSession() {
+                // Check if there's an active session in localStorage
+                const activeSession = localStorage.getItem(APP_CONFIG.STORAGE_KEYS.ACTIVE_SESSION);
+                const resumeBtn = document.getElementById('resumeSessionBtn');
+                
+                if (activeSession && resumeBtn) {
+                    resumeBtn.classList.remove('hidden');
+                }
+            },
+            
+            async resumeSession() {
+                const activeSession = localStorage.getItem(APP_CONFIG.STORAGE_KEYS.ACTIVE_SESSION);
+                if (activeSession) {
+                    await this.loadSession(activeSession);
+                }
             },
 
             // ============================================
@@ -1287,11 +1323,41 @@
             },
 
             async leaveSession() {
+                // Clear localStorage session first
+                localStorage.removeItem(APP_CONFIG.STORAGE_KEYS.ACTIVE_SESSION);
+                
+                // Remove user from session if they have an entry
                 if (this.data.currentUserId) {
                     await this.removeCollaborator(this.data.currentUserId);
-                } else {
-                    this.showLanding();
                 }
+                
+                // Clear session data
+                this.data.sessionId = null;
+                this.data.currentUserId = null;
+                this.data.collaborators = [];
+                
+                // Remove realtime subscription
+                if (this.data.realtimeChannel) {
+                    supabaseClient.removeChannel(this.data.realtimeChannel);
+                    this.data.realtimeChannel = null;
+                }
+                
+                this.showLanding();
+                this.showToast('Left session', 'info');
+            },
+            
+            goHome() {
+                // Just go back to landing without leaving the session
+                // This keeps the session in the background but clears active session
+                localStorage.removeItem(APP_CONFIG.STORAGE_KEYS.ACTIVE_SESSION);
+                
+                // Remove realtime subscription
+                if (this.data.realtimeChannel) {
+                    supabaseClient.removeChannel(this.data.realtimeChannel);
+                    this.data.realtimeChannel = null;
+                }
+                
+                this.showLanding();
             },
 
             updateTotal() {
