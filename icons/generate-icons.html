@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SplitSheet Icon Generator</title>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            background: #1a1a1a;
+            color: white;
+            padding: 40px;
+            text-align: center;
+        }
+        .icon-container {
+            display: inline-block;
+            margin: 20px;
+            text-align: center;
+        }
+        canvas {
+            border-radius: 22%;
+            margin-bottom: 10px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+        }
+        button {
+            background: #30D158;
+            color: black;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 10px;
+            font-weight: 600;
+            cursor: pointer;
+            font-size: 16px;
+            margin-top: 20px;
+        }
+        button:hover {
+            opacity: 0.9;
+        }
+        .sizes {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 20px;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+    </style>
+</head>
+<body>
+    <h1>SplitSheet Icon Generator</h1>
+    <p>Click "Download All Icons" to generate PWA icons</p>
+    
+    <div class="sizes" id="iconGrid"></div>
+    
+    <button onclick="downloadAll()">Download All Icons</button>
+
+    <script>
+        const sizes = [72, 96, 128, 144, 152, 192, 384, 512];
+        
+        function generateIcon(size) {
+            const canvas = document.createElement('canvas');
+            canvas.width = size;
+            canvas.height = size;
+            const ctx = canvas.getContext('2d');
+            
+            // Background gradient
+            const gradient = ctx.createLinearGradient(0, 0, size, size);
+            gradient.addColorStop(0, '#30D158');
+            gradient.addColorStop(1, '#007AFF');
+            
+            // Rounded rectangle background
+            const radius = size * 0.22;
+            ctx.fillStyle = gradient;
+            ctx.beginPath();
+            ctx.roundRect(0, 0, size, size, radius);
+            ctx.fill();
+            
+            // White "S" letter
+            ctx.fillStyle = '#000';
+            ctx.font = `bold ${size * 0.55}px -apple-system, BlinkMacSystemFont, sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('S', size / 2, size / 2 + size * 0.02);
+            
+            return canvas;
+        }
+        
+        // Display icons
+        const grid = document.getElementById('iconGrid');
+        const canvases = {};
+        
+        sizes.forEach(size => {
+            const container = document.createElement('div');
+            container.className = 'icon-container';
+            
+            const canvas = generateIcon(size);
+            canvas.style.width = '100px';
+            canvas.style.height = '100px';
+            
+            const label = document.createElement('div');
+            label.textContent = `${size}x${size}`;
+            label.style.fontSize = '12px';
+            label.style.color = '#888';
+            
+            container.appendChild(canvas);
+            container.appendChild(label);
+            grid.appendChild(container);
+            
+            canvases[size] = generateIcon(size); // Full size version for download
+        });
+        
+        function downloadCanvas(canvas, filename) {
+            const link = document.createElement('a');
+            link.download = filename;
+            link.href = canvas.toDataURL('image/png');
+            link.click();
+        }
+        
+        function downloadAll() {
+            sizes.forEach(size => {
+                setTimeout(() => {
+                    downloadCanvas(canvases[size], `icon-${size}x${size}.png`);
+                }, sizes.indexOf(size) * 200);
+            });
+        }
+    </script>
+</body>
+</html>

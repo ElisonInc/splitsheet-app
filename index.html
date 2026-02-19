@@ -6,20 +6,45 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="theme-color" content="#000000">
+    <meta name="description" content="Real-time collaborative split sheet agreements for music creators. Create legally binding split sheets with digital signatures.">
+    
+    <!-- PWA Manifest -->
+    <link rel="manifest" href="/manifest.json">
+    
+    <!-- Apple Touch Icons -->
+    <link rel="apple-touch-icon" href="/icons/icon-192x192.png">
+    <link rel="apple-touch-icon" sizes="152x152" href="/icons/icon-152x152.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="/icons/icon-192x192.png">
+    
+    <!-- Favicon -->
+    <link rel="icon" type="image/png" sizes="32x32" href="/icons/icon-72x72.png">
+    
     <title>SplitSheet | Session Agreements</title>
+    
+    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Libraries -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
     <script src="https://unpkg.com/@supabase/supabase-js@2.39.0"></script>
+    
+    <!-- App Config -->
+    <script src="/js/config.js"></script>
+    
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        
+        * {
+            -webkit-tap-highlight-color: transparent;
+            -webkit-touch-callout: none;
+        }
         
         body { 
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; 
             background: #000;
             color: #fff;
             overflow-x: hidden;
-            -webkit-tap-highlight-color: transparent;
         }
         
         .glass {
@@ -40,6 +65,11 @@
             background: rgba(255, 255, 255, 0.12);
             border-color: #30D158;
             outline: none;
+        }
+        
+        .ios-input:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
         }
         
         .signature-pad {
@@ -96,6 +126,11 @@
             background: rgba(255, 255, 255, 0.1);
             color: #fff;
             border: 1px solid rgba(255, 255, 255, 0.2);
+            transition: all 0.2s;
+        }
+        
+        .btn-secondary:active {
+            background: rgba(255, 255, 255, 0.15);
         }
         
         .percentage-ring {
@@ -127,6 +162,65 @@
             background: #FF3B30;
             animation: none;
             box-shadow: none;
+        }
+        
+        .sync-indicator.syncing {
+            background: #FF9500;
+            animation: pulse 1s infinite;
+        }
+        
+        /* Install prompt */
+        .install-prompt {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(48, 209, 88, 0.95);
+            color: #000;
+            padding: 12px 24px;
+            border-radius: 12px;
+            font-weight: 600;
+            z-index: 100;
+            animation: slideUp 0.3s ease;
+            cursor: pointer;
+        }
+        
+        /* Toast notifications */
+        .toast {
+            position: fixed;
+            top: 80px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(40, 40, 40, 0.95);
+            color: #fff;
+            padding: 12px 20px;
+            border-radius: 10px;
+            font-size: 14px;
+            z-index: 100;
+            animation: fadeIn 0.2s ease;
+            backdrop-filter: blur(10px);
+        }
+        
+        .toast.success {
+            background: rgba(48, 209, 88, 0.9);
+            color: #000;
+        }
+        
+        .toast.error {
+            background: rgba(255, 59, 48, 0.9);
+        }
+        
+        /* Skeleton loading */
+        .skeleton {
+            background: linear-gradient(90deg, #1a1a1a 25%, #2a2a2a 50%, #1a1a1a 75%);
+            background-size: 200% 100%;
+            animation: shimmer 1.5s infinite;
+            border-radius: 8px;
+        }
+        
+        @keyframes shimmer {
+            0% { background-position: 200% 0; }
+            100% { background-position: -200% 0; }
         }
     </style>
 </head>
@@ -272,10 +366,21 @@
     </div>
 
     <script>
-        const SUPABASE_URL = 'https://your-project.supabase.co';
-        const SUPABASE_ANON_KEY = 'your-anon-key';
-        
-        const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        // Initialize Supabase client using config
+        const supabaseClient = supabase.createClient(
+            SUPABASE_CONFIG.URL,
+            SUPABASE_CONFIG.ANON_KEY,
+            {
+                realtime: {
+                    params: {
+                        eventsPerSecond: 10
+                    }
+                },
+                db: {
+                    schema: 'public'
+                }
+            }
+        );
         
         const app = {
             data: {
@@ -288,14 +393,16 @@
                 finalizedAt: null,
                 sessionHash: null,
                 realtimeChannel: null,
-                deviceId: null
+                deviceId: null,
+                isOnline: navigator.onLine,
+                pendingChanges: []
             },
 
             getDeviceId() {
-                let deviceId = localStorage.getItem('splitsheet_device_id');
+                let deviceId = localStorage.getItem(APP_CONFIG.STORAGE_KEYS.DEVICE_ID);
                 if (!deviceId) {
                     deviceId = crypto.randomUUID();
-                    localStorage.setItem('splitsheet_device_id', deviceId);
+                    localStorage.setItem(APP_CONFIG.STORAGE_KEYS.DEVICE_ID, deviceId);
                 }
                 return deviceId;
             },
@@ -303,13 +410,19 @@
             async init() {
                 this.data.deviceId = this.getDeviceId();
                 
+                // Setup online/offline detection
+                window.addEventListener('online', () => this.handleOnline());
+                window.addEventListener('offline', () => this.handleOffline());
+                
+                // Check for session in URL
                 const params = new URLSearchParams(window.location.search);
                 const sessionId = params.get('session');
                 
                 if (sessionId) {
                     await this.joinSessionById(sessionId);
                 } else {
-                    const activeSession = localStorage.getItem('splitsheet_active_session');
+                    // Check for active session
+                    const activeSession = localStorage.getItem(APP_CONFIG.STORAGE_KEYS.ACTIVE_SESSION);
                     if (activeSession) {
                         await this.loadSession(activeSession);
                     }
@@ -317,11 +430,31 @@
                 
                 document.getElementById('dateDisplay').textContent = new Date().toLocaleDateString();
                 
+                // Cleanup on page unload
                 window.addEventListener('beforeunload', () => {
                     if (app.data.realtimeChannel) {
                         supabaseClient.removeChannel(app.data.realtimeChannel);
                     }
                 });
+                
+                // Load pending changes from storage
+                const pending = localStorage.getItem(APP_CONFIG.STORAGE_KEYS.PENDING_CHANGES);
+                if (pending) {
+                    this.data.pendingChanges = JSON.parse(pending);
+                }
+            },
+
+            handleOnline() {
+                this.data.isOnline = true;
+                this.updateConnectionStatus(true);
+                this.showToast('Back online', 'success');
+                this.syncPendingChanges();
+            },
+
+            handleOffline() {
+                this.data.isOnline = false;
+                this.updateConnectionStatus(false);
+                this.showToast('You are offline. Changes will sync when connected.', 'error');
             },
 
             updateConnectionStatus(isLive) {
@@ -336,11 +469,28 @@
                 }
             },
 
+            showToast(message, type = 'info') {
+                const existing = document.querySelector('.toast');
+                if (existing) existing.remove();
+                
+                const toast = document.createElement('div');
+                toast.className = `toast ${type}`;
+                toast.textContent = message;
+                document.body.appendChild(toast);
+                
+                setTimeout(() => toast.remove(), 3000);
+            },
+
             generateId() {
                 return Math.random().toString(36).substring(2, 10).toUpperCase();
             },
 
             async createSession() {
+                if (!this.data.isOnline) {
+                    this.showToast('You need to be online to create a session', 'error');
+                    return;
+                }
+                
                 const sessionId = this.generateId();
                 
                 const { data: session, error } = await supabaseClient
@@ -350,7 +500,7 @@
                     .single();
                 
                 if (error) {
-                    alert('Error creating session: ' + error.message);
+                    this.showToast('Error creating session: ' + error.message, 'error');
                     return;
                 }
                 
@@ -365,7 +515,7 @@
                     .from('collaborators')
                     .insert({
                         session_id: sessionId,
-                        percentage: 50,
+                        percentage: APP_CONFIG.DEFAULT_CREATOR_SPLIT,
                         is_creator: true,
                         device_id: this.data.deviceId
                     })
@@ -375,17 +525,23 @@
                 this.data.currentUserId = collab.id;
                 this.data.collaborators = [this.formatCollaborator(collab)];
                 
-                localStorage.setItem('splitsheet_active_session', sessionId);
+                localStorage.setItem(APP_CONFIG.STORAGE_KEYS.ACTIVE_SESSION, sessionId);
                 this.setupRealtime(sessionId);
                 this.showSession();
+                this.showToast('Session created!', 'success');
             },
 
             async joinSession() {
-                const id = prompt("Enter Session Code:").toUpperCase().trim();
+                const id = prompt("Enter Session Code:")?.toUpperCase().trim();
                 if (id) await this.joinSessionById(id);
             },
 
             async joinSessionById(sessionId) {
+                if (!this.data.isOnline) {
+                    this.showToast('You need to be online to join a session', 'error');
+                    return;
+                }
+                
                 const { data: session, error: sessionError } = await supabaseClient
                     .from('sessions')
                     .select('*')
@@ -393,12 +549,13 @@
                     .single();
                 
                 if (sessionError || !session) {
-                    alert('Session not found');
+                    this.showToast('Session not found', 'error');
                     return;
                 }
                 
                 if (session.finalized) {
-                    alert('This session has already been finalized.');
+                    this.showToast('This session has already been finalized.', 'error');
+                    // Still load it in read-only mode
                 }
                 
                 this.data.sessionId = sessionId;
@@ -408,6 +565,7 @@
                 this.data.sessionHash = session.hash;
                 this.data.createdAt = session.created_at;
                 
+                // Check for existing collaborator entry
                 const { data: existingCollab } = await supabaseClient
                     .from('collaborators')
                     .select('*')
@@ -419,7 +577,8 @@
                 
                 if (existingCollab) {
                     myCollab = existingCollab;
-                } else {
+                } else if (!session.finalized) {
+                    // Add new collaborator
                     const { data: newCollab, error: insertError } = await supabaseClient
                         .from('collaborators')
                         .insert({
@@ -433,6 +592,7 @@
                     
                     if (insertError) {
                         if (insertError.code === '23505') {
+                            // Race condition - fetch existing
                             const { data: raceCollab } = await supabaseClient
                                 .from('collaborators')
                                 .select('*')
@@ -441,7 +601,7 @@
                                 .maybeSingle();
                             myCollab = raceCollab;
                         } else {
-                            alert('Error joining session: ' + insertError.message);
+                            this.showToast('Error joining session: ' + insertError.message, 'error');
                             return;
                         }
                     } else {
@@ -449,8 +609,11 @@
                     }
                 }
                 
-                this.data.currentUserId = myCollab.id;
+                if (myCollab) {
+                    this.data.currentUserId = myCollab.id;
+                }
                 
+                // Load all collaborators
                 const { data: collaborators } = await supabaseClient
                     .from('collaborators')
                     .select('*')
@@ -458,10 +621,11 @@
                 
                 this.data.collaborators = collaborators.map(c => this.formatCollaborator(c));
                 
-                localStorage.setItem('splitsheet_active_session', sessionId);
+                localStorage.setItem(APP_CONFIG.STORAGE_KEYS.ACTIVE_SESSION, sessionId);
                 this.setupRealtime(sessionId);
                 this.showSession();
                 this.renderCollaborators();
+                this.showToast('Joined session!', 'success');
             },
 
             async loadSession(sessionId) {
@@ -472,7 +636,7 @@
                     .single();
                 
                 if (!session) {
-                    localStorage.removeItem('splitsheet_active_session');
+                    localStorage.removeItem(APP_CONFIG.STORAGE_KEYS.ACTIVE_SESSION);
                     return;
                 }
                 
@@ -500,16 +664,6 @@
                     .eq('session_id', sessionId);
                 
                 this.data.collaborators = collaborators.map(c => this.formatCollaborator(c));
-                
-                if (!this.data.currentUserId && this.data.collaborators.length > 0) {
-                    const unsigned = this.data.collaborators.find(c => !c.signatureData && !c.signedAt);
-                    if (unsigned) {
-                        this.data.currentUserId = unsigned.id;
-                    } else {
-                        this.data.currentUserId = this.data.collaborators[0].id;
-                    }
-                    this.data.collaborators = collaborators.map(c => this.formatCollaborator(c));
-                }
                 
                 this.setupRealtime(sessionId);
                 this.showSession();
@@ -581,6 +735,7 @@
                             
                             if (!wasFinalized && session.finalized) {
                                 this.showFinalizedState();
+                                this.showToast('Session finalized!', 'success');
                             }
                             
                             this.renderCollaborators();
@@ -602,7 +757,10 @@
 
             async removeCollaborator(id) {
                 if (this.data.isFinalized) return;
-                if (this.data.collaborators.length <= 1) return;
+                if (this.data.collaborators.length <= 1) {
+                    this.showToast('Cannot remove the last collaborator', 'error');
+                    return;
+                }
                 
                 const { data: session } = await supabaseClient
                     .from('sessions')
@@ -623,11 +781,20 @@
                 
                 if (this.data.currentUserId === id) {
                     this.data.currentUserId = null;
+                    this.showToast('You have been removed from the session', 'info');
+                    this.showLanding();
                 }
             },
 
             async updateCollaborator(id, field, value) {
                 if (this.data.isFinalized) return;
+                
+                if (!this.data.isOnline) {
+                    // Queue change for later sync
+                    this.queueChange({ id, field, value });
+                    this.showToast('Change queued for sync', 'info');
+                    return;
+                }
                 
                 const { data: session } = await supabaseClient
                     .from('sessions')
@@ -663,6 +830,29 @@
                     c[field] = value;
                     if (field === 'percentage') this.updateTotal();
                 }
+            },
+
+            queueChange(change) {
+                this.data.pendingChanges.push({
+                    ...change,
+                    timestamp: Date.now()
+                });
+                localStorage.setItem(
+                    APP_CONFIG.STORAGE_KEYS.PENDING_CHANGES,
+                    JSON.stringify(this.data.pendingChanges)
+                );
+            },
+
+            async syncPendingChanges() {
+                if (this.data.pendingChanges.length === 0) return;
+                
+                for (const change of this.data.pendingChanges) {
+                    await this.updateCollaborator(change.id, change.field, change.value);
+                }
+                
+                this.data.pendingChanges = [];
+                localStorage.removeItem(APP_CONFIG.STORAGE_KEYS.PENDING_CHANGES);
+                this.showToast('All changes synced', 'success');
             },
 
             updateTotal() {
@@ -853,7 +1043,12 @@
 
             async saveSignature() {
                 if (this.data.isFinalized) {
-                    alert('Session is already finalized');
+                    this.showToast('Session is already finalized', 'error');
+                    return;
+                }
+                
+                if (!this.data.isOnline) {
+                    this.showToast('You need to be online to sign', 'error');
                     return;
                 }
                 
@@ -866,7 +1061,7 @@
                 if (sessionCheck?.finalized) {
                     this.data.isFinalized = true;
                     this.renderCollaborators();
-                    alert('Session was just finalized by another user');
+                    this.showToast('Session was just finalized by another user', 'error');
                     return;
                 }
                 
@@ -890,17 +1085,24 @@
                 
                 this.data.collaborators = freshCollaborators.map(c => this.formatCollaborator(c));
                 this.renderCollaborators();
+                this.showToast('Signature saved!', 'success');
                 
                 const total = freshCollaborators.reduce((sum, c) => sum + (c.percentage || 0), 0);
                 const allSigned = freshCollaborators.every(c => c.signature_data && c.signed_at);
                 
                 if (allSigned && total === 100) {
+                    this.showToast('All parties signed! Finalizing...', 'success');
                     await this.finalizeSheet();
                 }
             },
 
             async updateSongTitle(val) {
                 if (this.data.isFinalized) return;
+                
+                if (!this.data.isOnline) {
+                    this.showToast('You need to be online to update', 'error');
+                    return;
+                }
                 
                 const { data: session } = await supabaseClient
                     .from('sessions')
@@ -946,6 +1148,11 @@
             async finalizeSheet() {
                 if (this.data.isFinalized) return;
                 
+                if (!this.data.isOnline) {
+                    this.showToast('You need to be online to finalize', 'error');
+                    return;
+                }
+                
                 const { data: sessionCheck } = await supabaseClient
                     .from('sessions')
                     .select('finalized')
@@ -968,7 +1175,7 @@
                 
                 const allSigned = freshCollaborators.every(c => c.signature_data && c.signed_at);
                 if (!allSigned) {
-                    alert("All parties must sign before generating the final document.");
+                    this.showToast("All parties must sign before generating the final document.", 'error');
                     return;
                 }
                 
@@ -991,6 +1198,7 @@
                 this.generatePDF(hash, finalizedAt);
                 this.showFinalizedState();
                 this.renderCollaborators();
+                this.showToast('Document generated!', 'success');
             },
 
             async generateHash() {
@@ -1109,6 +1317,20 @@
             }
         };
 
+        // Register Service Worker
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/sw.js')
+                    .then((registration) => {
+                        console.log('SW registered:', registration.scope);
+                    })
+                    .catch((error) => {
+                        console.log('SW registration failed:', error);
+                    });
+            });
+        }
+
+        // Initialize app
         window.onload = () => app.init();
     </script>
 </body>
